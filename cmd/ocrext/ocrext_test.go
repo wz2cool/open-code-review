@@ -108,6 +108,24 @@ func installFakeOCR(t *testing.T, extra string) {
 // merged JSON the command wrote to its output file.
 func runTestReview(t *testing.T) mergedOutput {
 	t.Helper()
+	// Capture stderr: the run is expected to emit the no-protocol note for
+	// its protocol-less reviewer entry.
+	oldStderr := os.Stderr
+	noteR, noteW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = noteW
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+	defer func() {
+		noteW.Close()
+		relay := readAll(t, noteR)
+		if !strings.Contains(relay, "no protocol") || !strings.Contains(relay, "claude-x") {
+			t.Errorf("protocol-default note missing for claude-x, got %q", relay)
+		}
+	}()
 	writeTestConfig(t, `[{"url":"https://fake.test/v1","auth_token":"tok","model":"claude-x"}]`)
 	installFakeOCR(t, "")
 	t.Setenv("FAKE_PRIMARY_JSON", testPrimaryJSON)
@@ -278,6 +296,9 @@ func TestLoadReviewers(t *testing.T) {
 	_, entries, err := loadReviewers(path)
 	if err != nil || len(entries) != 2 || entries[0].Model != "m1" || entries[1].Model != "m2" {
 		t.Fatalf("entries = %+v, err = %v", entries, err)
+	}
+	if entries[0].Protocol != "" {
+		t.Errorf("protocol should be empty when absent, got %q", entries[0].Protocol)
 	}
 }
 
@@ -839,4 +860,45 @@ func TestRunReview_AudienceForwardedToChildren(t *testing.T) {
 	// Forwarding itself is asserted by TestForwardedArgsExcludeParentOnlyFlags;
 	// this test pins the end-to-end path: --audience=agent is accepted and the
 	// run completes with both children.
+}
+
+func TestDropReviewer_NormalizesProviderURLSuffix(t *testing.T) {
+	// Reproduces the user's exact shape: a custom-provider anthropic primary
+	// whose resolved URL carries the /v1/messages suffix baked in by the
+	// resolver, vs a reviewer entry storing the bare base URL.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := `{"provider":"p1",` +
+		`"custom_providers":{"p1":{"url":"https://ark.test/api/coding","api_key":"t","model":"glm-5.3-flash","protocol":"anthropic"}},` +
+		`"reviewers":[` +
+		`{"url":"https://ark.test/api/coding","auth_token":"t","model":"glm-5.3-flash"},` +
+		`{"url":"https://ark.test/api/coding","auth_token":"t","model":"deepseek-v4.1-flash"}]}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("OCR_LLM_URL", "")
+	t.Setenv("OCR_LLM_TOKEN", "")
+	t.Setenv("OCR_LLM_MODEL", "")
+
+	mainEp, err := llm.ResolveEndpointWithOptions(cfgPath, llm.ResolveOptions{})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if mainEp.URL != "https://ark.test/api/coding/v1/messages" {
+		t.Fatalf("precondition: resolved URL should carry the suffix, got %q", mainEp.URL)
+	}
+	_, entries, err := loadReviewers(cfgPath)
+	if err != nil {
+		t.Fatalf("loadReviewers: %v", err)
+	}
+	var kept []string
+	for _, e := range entries {
+		if normalizeEndpointURL(e.URL) == normalizeEndpointURL(mainEp.URL) && e.Model == mainEp.Model {
+			continue
+		}
+		kept = append(kept, e.Model)
+	}
+	if len(kept) != 1 || kept[0] != "deepseek-v4.1-flash" {
+		t.Fatalf("kept = %v, want only the distinct model (same-model entry must drop despite the URL suffix)", kept)
+	}
 }

@@ -17,10 +17,11 @@ import (
 // temp config hands the entry to the child as its llm section verbatim and
 // unknown fields survive untouched.
 type reviewerEntry struct {
-	Index int
-	URL   string
-	Model string
-	Raw   []byte
+	Index    int
+	URL      string
+	Model    string
+	Protocol string
+	Raw      []byte
 }
 
 // userConfigPath returns the config file ocr_ext reads: the same
@@ -62,6 +63,7 @@ func loadReviewers(path string) (raw map[string]json.RawMessage, entries []revie
 		var fields struct {
 			URL          string `json:"url"`
 			Model        string `json:"model"`
+			Protocol     string `json:"protocol"`
 			AuthToken    string `json:"auth_token"`
 			AuthTokenCmd string `json:"auth_token_cmd"`
 		}
@@ -80,7 +82,7 @@ func loadReviewers(path string) (raw map[string]json.RawMessage, entries []revie
 		if strings.TrimSpace(fields.AuthToken) == "" && strings.TrimSpace(fields.AuthTokenCmd) == "" {
 			return nil, nil, fmt.Errorf("reviewers[%d]: credentials are required: set auth_token or auth_token_cmd (reviewer entries follow the llm section, not the provider registry's api_key names)", i)
 		}
-		entries = append(entries, reviewerEntry{Index: i, URL: fields.URL, Model: fields.Model, Raw: item})
+		entries = append(entries, reviewerEntry{Index: i, URL: fields.URL, Model: fields.Model, Protocol: fields.Protocol, Raw: item})
 	}
 	return raw, entries, nil
 }

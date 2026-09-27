@@ -160,7 +160,11 @@ func runReview(cmd *cobra.Command, opts reviewOptions) error {
 
 	var reviewers []reviewerEntry
 	for _, e := range entries {
-		if e.URL == mainEp.URL && e.Model == mainEp.Model {
+		// The resolver bakes the protocol path into a provider endpoint's URL
+		// (anthropic → /v1/messages, resolver.go:588-590) while reviewer
+		// entries store the bare base URL. Normalize both sides before
+		// comparing, or an entry identical to the primary never matches.
+		if normalizeEndpointURL(e.URL) == normalizeEndpointURL(mainEp.URL) && e.Model == mainEp.Model {
 			fmt.Fprintf(os.Stderr, "[ocr_ext] dropping reviewer %q: identical to the primary endpoint and model\n", e.Model)
 			continue
 		}
@@ -173,11 +177,21 @@ func runReview(cmd *cobra.Command, opts reviewOptions) error {
 	// collapse into a single attribution and cross-dedup each other's
 	// findings. Distinct names keep the report unambiguous.
 	seenModels := map[string]bool{mainEp.Model: true}
+	var noProtocol []string
 	for _, e := range reviewers {
 		if seenModels[e.Model] {
 			return fmt.Errorf("duplicate reviewer model %q: reviewers must use distinct model names so found_by attribution stays unambiguous", e.Model)
 		}
 		seenModels[e.Model] = true
+		if e.Protocol == "" {
+			noProtocol = append(noProtocol, e.Model)
+		}
+	}
+	if len(noProtocol) > 0 {
+		// The llm section's legacy default is the Anthropic protocol, which
+		// silently breaks OpenAI-compatible reviewer endpoints. Make the
+		// default visible instead of leaving a confusing reviewer failure.
+		fmt.Fprintf(os.Stderr, "[ocr_ext] note: reviewer(s) %s have no protocol; the llm-section default is anthropic — set \"protocol\": \"openai\" for OpenAI-compatible endpoints\n", strings.Join(noProtocol, ", "))
 	}
 
 	bin, err := findOCRBinary()
@@ -258,8 +272,22 @@ func runReview(cmd *cobra.Command, opts reviewOptions) error {
 	return writeJSONReport(opts.outputPath, m)
 }
 
-// buildChildSpec assembles one child: the review subcommand, forwarded user
-// flags, a fixed JSON report target, and — for reviewers only — the temp
+// endpointSuffixes are the protocol paths the LLM clients (or the resolver,
+// for provider endpoints) append to a base URL. Stripping them puts a bare
+// config URL and a resolved endpoint URL on the same footing.
+var endpointSuffixes = []string{"/v1/messages", "/chat/completions", "/responses"}
+
+func normalizeEndpointURL(u string) string {
+	u = strings.TrimRight(u, "/")
+	for _, s := range endpointSuffixes {
+		if strings.HasSuffix(u, s) {
+			return strings.TrimSuffix(u, s)
+		}
+	}
+	return u
+}
+
+// buildChildSpec assembles one child: the review subcommand, forwarded user report target, and — for reviewers only — the temp
 // config carrying the reviewer's own endpoint. The primary child gets
 // neither --config nor --provider/--model here (overrides are appended by
 // the caller). The report file is created by the parent with O_EXCL so its

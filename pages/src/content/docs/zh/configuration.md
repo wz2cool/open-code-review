@@ -375,6 +375,7 @@ reviewer 声明在共享的 `~/.opencodereview/config.json` 中:
 - 与主模型端点和模型完全相同的条目会被丢弃。
 - 每个子进程都是一次完整的标准 `ocr review`(独立 session、独立预算、独立过滤 pass);携带 reviewer 端点的临时配置以 0600 权限创建,运行结束后删除。
 - `ocr review` 本身不读取 `reviewers`——不配置它就没有任何变化。
+- 省略 `protocol` 时条目默认走 Anthropic 协议(`llm` 段的遗留默认);OpenAI 兼容端点必须显式写 `"protocol": "openai"`。
 - v1 暂不支持:SARIF 输出、`--resume`、`--preview`。
 
 ## 另见

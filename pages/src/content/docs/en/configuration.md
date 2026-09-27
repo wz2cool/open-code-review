@@ -415,6 +415,7 @@ Rules and behavior:
 - Entries whose endpoint and model are identical to the primary model are dropped.
 - Every child is a full standard `ocr review` run (own session, own budget, own filter pass); the temp config carrying a reviewer's endpoint is created `0600` and removed after the run.
 - `ocr review` itself never reads `reviewers` — without it, nothing changes.
+- Omitting `protocol` defaults the entry to the Anthropic protocol (the `llm` section's legacy default); set `"protocol": "openai"` for OpenAI-compatible endpoints.
 - Not supported in v1: SARIF output, `--resume`, `--preview`.
 
 ## See Also

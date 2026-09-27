@@ -319,6 +319,7 @@ ocr config set language English
 - 엔드포인트와 모델이 프라이머리 모델과 동일한 항목은 제거됩니다.
 - 각 자식 프로세스는 완전한 표준 `ocr review` 실행입니다(독립 세션, 독립 예산, 독립 필터 패스). 리뷰어 엔드포인트를 담는 임시 설정 파일은 0600으로 생성되고 실행 후 삭제됩니다.
 - `ocr review` 자체는 `reviewers`를 읽지 않습니다 — 설정하지 않으면 아무것도 바뀌지 않습니다.
+- `protocol`을 생략하면 항목은 Anthropic 프로토콜로 폴백합니다(`llm` 섹션의 레거시 기본값). OpenAI 호환 엔드포인트는 `"protocol": "openai"`를 명시하세요.
 - v1에서 미지원: SARIF 출력, `--resume`, `--preview`.
 
 ## 관련 문서 {#see-also}
