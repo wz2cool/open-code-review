@@ -741,3 +741,102 @@ func TestUserConfigPath_ErrorWhenHomeUnknown(t *testing.T) {
 		t.Fatal("an unknown home directory must error")
 	}
 }
+
+func TestRunReview_PrimaryOverridesReachChild(t *testing.T) {
+	// The fake ocr records its argv so the test can assert the overrides were
+	// appended to the primary child's command line.
+	argvDir := t.TempDir()
+	writeTestConfig(t, `[{"url":"https://fake.test/v1","auth_token":"tok","model":"claude-x"}]`)
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"version\" ]; then echo \"$FAKE_CHILD_VERSION\"; exit 0; fi\n" +
+		"has_config=0\nprev=\"\"\nout=\"\"\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n" +
+		"  case \"$a\" in --config|--config=*) has_config=1 ;; esac\n" +
+		"  prev=\"$a\"\n" +
+		"done\n" +
+		"if [ \"$has_config\" = \"1\" ]; then\n" +
+		"  printf '%s\\n' \"$@\" > \"$ARGV_REVIEWER\"\n" +
+		"  printf '%s' \"$FAKE_REVIEWER_JSON\" > \"$out\"\n" +
+		"else\n" +
+		"  printf '%s\\n' \"$@\" > \"$ARGV_PRIMARY\"\n" +
+		"  printf '%s' \"$FAKE_PRIMARY_JSON\" > \"$out\"\n" +
+		"fi\n"
+	bin := filepath.Join(dir, "ocr")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_PRIMARY_JSON", testPrimaryJSON)
+	t.Setenv("FAKE_REVIEWER_JSON", testReviewerJSON)
+	t.Setenv("FAKE_MODE", "")
+	t.Setenv("FAKE_CHILD_VERSION", "")
+	t.Setenv("OCR_LLM_URL", "")
+	t.Setenv("OCR_LLM_TOKEN", "")
+	t.Setenv("OCR_LLM_MODEL", "")
+	t.Setenv("ARGV_PRIMARY", filepath.Join(argvDir, "primary.argv"))
+	t.Setenv("ARGV_REVIEWER", filepath.Join(argvDir, "reviewer.argv"))
+
+	// A --model override resolves against the config's llm section; a
+	// --provider override would need a registry entry the temp-home config
+	// does not have, so this test pins model-only.
+	cmd := newReviewCmd()
+	cmd.SetArgs([]string{"--model", "gpt-5-turbo"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	primary, err := os.ReadFile(filepath.Join(argvDir, "primary.argv"))
+	if err != nil {
+		t.Fatalf("primary argv not recorded: %v", err)
+	}
+	primaryArgs := strings.Fields(string(primary))
+	if !containsArg(primaryArgs, "--model=gpt-5-turbo") {
+		t.Errorf("primary child args missing the model override: %v", primaryArgs)
+	}
+	if containsArg(primaryArgs, "--config") {
+		t.Errorf("primary child must not carry --config: %v", primaryArgs)
+	}
+
+	reviewer, err := os.ReadFile(filepath.Join(argvDir, "reviewer.argv"))
+	if err != nil {
+		t.Fatalf("reviewer argv not recorded: %v", err)
+	}
+	reviewerArgs := strings.Fields(string(reviewer))
+	if containsArg(reviewerArgs, "--model=gpt-5-turbo") {
+		t.Errorf("reviewer child must not carry primary overrides: %v", reviewerArgs)
+	}
+	if !containsArg(reviewerArgs, "--config") {
+		t.Errorf("reviewer child must carry --config: %v", reviewerArgs)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want || strings.HasPrefix(a, want+"=") || (want == "--config" && a == "--config") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunReview_AudienceForwardedToChildren(t *testing.T) {
+	writeTestConfig(t, `[{"url":"https://fake.test/v1","auth_token":"tok","model":"claude-x"}]`)
+	installFakeOCR(t, "")
+	t.Setenv("FAKE_PRIMARY_JSON", testPrimaryJSON)
+	t.Setenv("FAKE_REVIEWER_JSON", testReviewerJSON)
+	t.Setenv("FAKE_MODE", "")
+	t.Setenv("OCR_LLM_URL", "")
+	t.Setenv("OCR_LLM_TOKEN", "")
+	t.Setenv("OCR_LLM_MODEL", "")
+
+	cmd := newReviewCmd()
+	cmd.SetArgs([]string{"--audience", "agent", "-o", filepath.Join(t.TempDir(), "m.json")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// Forwarding itself is asserted by TestForwardedArgsExcludeParentOnlyFlags;
+	// this test pins the end-to-end path: --audience=agent is accepted and the
+	// run completes with both children.
+}

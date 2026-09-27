@@ -46,14 +46,17 @@ type reviewOptions struct {
 	preview               bool
 }
 
-// parentOnlyFlags are consumed by ocr_ext itself and never forwarded: the
-// merged report format and output target. --provider/--model ARE forwarded
-// (to the primary child only); --resume/--preview never reach a child.
+// parentOnlyFlags are consumed by ocr_ext itself and never blindly
+// forwarded. --provider/--model reach only the primary child (appended
+// explicitly in runReview); forwarding them to reviewers would override the
+// reviewer's own configured model.
 var parentOnlyFlags = map[string]bool{
-	"format":  true,
-	"output":  true,
-	"resume":  true,
-	"preview": true,
+	"format":   true,
+	"output":   true,
+	"resume":   true,
+	"preview":  true,
+	"provider": true,
+	"model":    true,
 }
 
 func newReviewCmd() *cobra.Command {
