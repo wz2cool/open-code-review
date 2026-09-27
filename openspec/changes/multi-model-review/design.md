@@ -2,107 +2,60 @@
 
 ## Context
 
-动机与范围见 [proposal.md](proposal.md) — Why。实现要贴合的既有结构与约束:
+单模型评审流程已完整存在且构造高度可注入:`agent.Args` 已支持注入 `LLMClient`、`Session`、`Model`、`Provider`、`MaxTokensBudget` 等参数;`ocr review` 的编排链在 `cmd/opencodereview/review_cmd.go`(runtime 解析 → 会话准入 → `agent.New` → `Run` → `emitRunResult`)。配置文件 `~/.opencodereview/config.json` 已有 `providers`/`custom_providers` 命名端点注册表与 `llm` 显式端点段。`internal/scan` 的 DEDUP_TASK 是一次 LLM pass,与确定性合并无关,不可复用。预算闸门现状:per-run 的 `MaxTokensBudget` 在累计用量加下一组预估超限时停止派发。
 
-- 整条 review 管线绑定单一模型:`loadLLMRuntime`(`cmd/opencodereview/shared.go`)解析**一个** endpoint 构造一个 `LLMClient`,`agent.Agent` 与 `llmloop.Runner` 都以单 client + 单 model 运行;多模型需要在其上做编排层,而不是改管线内部。
-- 凭据体系已支持共存:`Config.Providers` / `CustomProviders` 是 map,可同时存多家的凭据,只是"激活"只有一个;`llm.ResolveEndpointWithOptions` 已支持按 `--provider` / `--model` 定向解析单个 endpoint。
-- 两个现成蓝本:scan 模式的 `DEDUP_TASK`(`internal/scan/agent.go` 的 `maybeRunDedup`,LLM 判重 + `merged_content` 整合 + 全有或全无校验 + 失败保底)与 GitHub Action 脚本的 `sameCommentSpan`(同路径 + 行 span IoU > 0.6,单行/多行不互判)。
-- `CommentCollector` 的 `Snapshot` / `Since` / `ReplaceSince` 已提供批次隔离写入能力;对抗性 pass 已确立"第二遍 best-effort、失败只警告、不改退出码"的先例。
+本变更是一份重写:同名旧提案(6 需求 / 17 场景 / 22 任务,含 LLM 合并 pass)已整体作废,旧实现从未提交且已被清除;本文件只覆盖缩小后的范围。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 召回最大化:多个模型各自独立跑完整管线,并集输出,`found_by` 归因辅助分诊。
-- 多模型是内部事务:下游(JSON / SARIF / 文本输出)看到的始终是**一份合并后的列表**,不需要知道多模型的存在。
-- 失败降级:任何副环节(额外 reviewer、合并 pass)失败都不降低主结果可用性、不改变退出码。
+- 配置几个模型 → 并发各扫一遍 → 确定性合并为一份带来源的结果。
+- 单模型路径行为与输出字节级不变;多模型为纯增量。
+- diff 规模可控(预计约 2200 行,含测试与文档),核心评审流水线(分组、计划、过滤、对抗性 pass、压缩)零改动。
 
 **Non-Goals:**
 
-- 不做交叉验证 / 挑战式合并——任何"挑战"环节都可能错杀真发现,与召回最大化目标相反。
-- v1 不覆盖 scan 模式(它是另一套 agent,待 review 跑通后复制)。
-- v1 不支持多模型与 `--resume` 组合(见 Decisions D8)。
-- 不做 TUI 管理额外 reviewer,v1 也不为 `additional_reviewers` 增加 `ocr config set` 支持(配置写入路径见 D4);不改 GitHub Action 发帖展示与 `action.yml` 输入(用户主用本地 CLI,下游展示延后)。
-- 不做分组级流水线交错(两个 agent 内部各自的并发语义保持现状)。
+- 无 CLI flag:`reviewers` 仅经配置文件。"用哪几个模型"是持久偏好而非每次调用的临时决定;flag 以后可增量加入,不破坏任何东西。
+- `ocr config` 子命令不提供 `reviewers` 写入:v1 手动编辑 config.json,受众与现在手写 `providers` 条目的是同一批人。
+- `ocr llm test` 不校验追加端点连通性:配置装载阶段做结构校验(provider 存在、模型可解析);鉴权/网络类错误留到运行时,由失败降级吸收。
+- 不做共识优先排序:"两个模型都报"衡量重叠度而非重要性,severity 才是优先级信号;`found_by` 已让共识肉眼可见。实现上只是一行 comparator,以后想加随时加。
+- 不做 LLM 合并 pass,不做向量相似度:v1 接受"措辞差异大的同题发现会重复出现"(宁多不丢)。
 
 ## Decisions
 
-### D1: 并发执行,聚合预算
+### D1: 配置形态与解析
 
-每个 reviewer 一个独立的 `agent.Agent`(各自的 Runner、Session、CommentCollector),goroutine 并发执行;所有 Runner 通过共享的原子聚合计数器参与同一个 `--max-tokens-budget` 总账,任何请求发起前先查账,超限后所有 reviewer 都不再发起新请求,在途请求正常完成。
+`reviewers` 数组长在现有 provider 注册表上,不引入新概念。条目两种形态:引用式 `{"provider": "deepseek"[, "model": "..."]}`(凭证复用注册表)与内联式(与 `llm` 段同构的端点对象,适合一次性端点)。主模型解析链(`provider`+`model` / `llm` 段 / 环境变量)完全不动。追加条目逐一解析为独立 `LLMClient`;与主模型端点+模型相同的条目幂等丢弃;未知 provider 名在任何 LLM 调用前报错。reviewer 身份 = 模型名,重名追加 provider 后缀;注册顺序 primary 在前,该顺序同时决定 `found_by` 与进度标注的出现次序。备选方案 `--reviewer` flag 被否决(见 Non-Goals)。
 
-- 替代方案:串行(主先副后)。预算语义更简单、日志自然分节,但墙钟时间 ×2。用户已明确选择并发,接受其代价:D7 的输出前缀与本条的计数器协调。
-- 预算耗尽时的语义:已完成的部分全部进入合并,记一条 warning,退出码不变(与现有 flag 语义"partial results are published, review exits 0"一致)。交付"部分贡献"优于丢弃。
+### D2: 并发设施
 
-### D2: 合并分两层,LLM 层失败保底
+每个 reviewer 一个完整 `agent.Agent`:独立 `LLMClient`、独立 `Session`、独立 `CommentCollector` 与 `CommentWorkerPool`(collector 不得跨 reviewer 共享,否则不同模型的评论会混进同一归属),模板与工具注册表共享。并发编排在 cmd 层新增文件中实现。
 
-1. **确定性预合并**(纯 Go,零成本):同路径 + 行 span IoU > 0.6 **且内容信号一致**(同 category 且归一化文本相似度达到阈值,阈值在实现期定稿并固化进单测)才归组;单行与多行评论不互判重复(GA 脚本先例);无行号的评论不参与确定性匹配(GA `lineSpan` 对无行号返回 null),但仍进入 LLM 整合 pass 的输入。顺带缩小 LLM 层输入。内容护栏是刻意的:GA 对历史评论做纯位置判重是安全的(那是同一模型自己的重复),跨模型纯位置判重会静默吞掉"同位置的不同问题"——两个模型常在同一行范围各锚一个不同发现,合并发生在 LLM 层之前,吞掉的发现无法挽回,与召回优先的目标直接冲突;位置匹配但内容信号不足的对保留给 LLM 层语义判定。
-2. **LLM 整合 pass**:全部评论带稳定 `c-N` id 与模型归属打包,输出 `groups`(members + 可选 `merged_content`);**全覆盖校验**(每个 id 恰好出现一次,有未知 id / 重复分配 / 遗漏 → 整体作废),失败保留预合并结果。
+共享 token 账本:`internal/llmloop` 新增原子累加的 `TokenCounter`,注入每个 Runner,预算闸门读共享值——配置的预算含义是"这次 review 总共最多花多少",而非每 reviewer 各一份(均分会把每个模型的深度对半砍,与提升召回的初衷相反)。单 reviewer 时账本退化为其自身用量,语义与现状一致。
 
-代表元规则沿用 scan `DEDUP_TASK`:组内第一条成员为代表,`merged_content` 只覆盖 `content` 字段,`suggestion_code` / 行号 / `severity` / `category` 保持代表元的——v1 不融合代码建议,半融合代码比不融合更危险。模型顺序上主 reviewer 的评论排前,因此默认幸存的是主模型的措辞。
+进度标注:`internal/stdout` 新增 `Prefixed` writer,`internal/agent` 暴露进度 writer 注入点。标注紧随 `[ocr]` 标记之后,使并发交错的每行进度可归属;writer 逐次解析当前 stdout 目标,避免 stdout 被 Quiet/Swap 后仍向已静默的流写入。备选的串行执行可省去这两块(约 500 行、三个核心文件零改动),但墙钟时间 ×N 被用户明确否决。
 
-- 备选的纯 LLM 单层方案被否:无 LLM 也能消掉明显重复,且 LLM 失败时仍有产出;备选的纯确定性方案被否:不同锚点、不同措辞的同一问题(跨模型最常见的重复形态)span 匹配不到。
+### D3: 确定性合并(新包 `internal/merge`)
 
-### D3: 合并 pass 用主 reviewer 的模型执行
+纯函数包,零 LLM 调用,合并永不失败。匹配双条件:位置重叠(多行区间 IoU > 0.6;单行与单行同位置;单行与多行永不匹配)且内容 token 集合相似度 ≥ 0.5。缺一不可:纯位置会吞掉同位置的不同问题(两条单行评论 IoU 恒为 1.0),纯内容会在不同位置误合。组内收敛:正文取 severity 较高者,平手取内容更详尽者;`found_by` 取并集;修复建议与上下文随正文,不跨条拼凑。无法解析行号的发现跳过匹配、原样保留。备选的精确键去重(path+行号+category 完全一致)因 LLM 之间行号常对不齐而几乎去重不了,被否决。
 
-输入是几十条评论的小 payload,成本可忽略;主模型在编排层已经解析完毕,无需额外 endpoint。不单独为此引入"用哪个模型合并"的配置项。
+### D4: 输出归因
 
-### D4: 配置用 `{provider, model}` 对象,不用 `provider/model` 字符串
+`model.LlmComment` 增加 `FoundBy []string`(omitempty)。JSON 输出按注册顺序携带;终端文本输出(现有 `renderComment` 渲染路径)在多模型运行时每条发现尾部加 `found by: ...` 行;SARIF 输出在 v1 不携带 `found_by`,报文结构不变(以后可经 property bag 增量加入)。单模型输出不含该字段、不加该行,manifest 也不含 reviewers 字段(omitempty 保证字节级一致)。多模型输出复用 primary 的 session_id,token 用量与警告取聚合值。
 
-模型名本身常含斜杠(如 `deepseek-ai/DeepSeek-V3`),字符串按斜杠切分有歧义。配置文件用结构化对象消除歧义;`--reviewer` flag 按约定**第一个斜杠**切分,provider 名不允许含斜杠(文档明示)。
+### D5: 失败降级与 resume
 
-`--reviewer` 的值 MUST 通过与配置相同的 provider 存在性校验,校验失败即报错——显式指定的 reviewer 不能静默降级为单模型运行;凭据缺失、连接失败这类运行期问题仍按失败降级语义处理(spec R5:warning、主结果照常、退出码不变)。flag 与配置条目或主模型重复的 (provider, model) 按幂等去重:脚本把已在配置里的 reviewer 再显式传一遍是正常组合,不应报错或重复运行;配置数组内部的重复仍属笔误,维持报错。
-
-v1 的配置写入路径:手动编辑配置文件(或 `--reviewer` 单次追加)。TUI 与 `ocr config set` 对数组字段的写入支持延后(见 Non-Goals),文档按手动编辑路径说明。
-
-### D5: `found_by` 归因,下游单列表无感知
-
-`LlmComment` 增加可选 `found_by`(reviewer 标识数组,组内成员并集;标识默认取模型名,多个 reviewer 同名时附 provider 区分;内部按 reviewer 注册顺序排列——主模型在前——保证并发下输出确定);JSON 输出该字段,SARIF / 文本照常(文本可选地以标注呈现)。合并发生在 collector 之后、`emitRunResult` 之前,下游只见到一份列表。JetBrains 扩展 `ignoreUnknownKeys = true` 天然容忍新字段。
-
-会话侧:每个 reviewer 独立 session 文件(现有 session 格式假定单模型,不改其格式);运行 manifest 增加 reviewers 列表(名字 + 解析来源,不含秘密)——该字段仅在多模型运行时写入(omitempty),单模型 manifest 必须保持逐字节不变:manifest 进入 JSON 输出,无条件新增字段会破坏"默认行为不变"的承诺。
-
-### D6: 合并模板 `REVIEW_MERGE_TASK` + 门槛 + `--no-merge`
-
-review 模板新增可选任务 `REVIEW_MERGE_TASK`,形态对标 scan `DEDUP_TASK`(同一全覆盖校验、`merged_content` 语义、失败保底)。门槛:合并输入评论数小于阈值(对标 `DedupMinComments`,默认 2)时跳过 LLM pass,仅保留预合并结果。`--no-merge` 跳过整个合并阶段,直接拼接各方列表(每条保留自己的 `found_by`),与 scan 的 `--no-dedup` 对称。
-
-### D7: 进度输出按模型加前缀
-
-并发下两个 agent 的 `[ocr] ...` 进度行会交错,各自加 reviewer 前缀(如 `[ocr] [glm] ...`;前缀取模型名,重名时附 provider,与 `found_by` 的标识规则一致)。机器可读模式(JSON / SARIF)下 stdout 抑制的既有行为不变——评论在合并后才输出。
-
-### D8: v1 显式拒绝 `--resume` 与多模型组合
-
-会话与检查点格式假定单模型;按模型分桶的完整 resume 设计工作量大,且"副模型重跑 + 残结果合并"有去重歧义。多模型运行时带 `--resume` 直接报错,错误信息提示两个解除方向(去掉额外 reviewer,或去掉 resume)。后续版本再设计完整方案。
-
-### D9: 输出确定性
-
-合并结果按 path + `start_line` 稳定重排后进入输出,消除并发完成顺序对输出顺序的影响。
-
-### D10: 独立与共享的边界,以及输出的单一骨架
-
-现有单模型装配把若干句柄绑在一起(`review_cmd.go` 的 `buildToolRegistry(rt.Collector, ...)` 把 collector 内嵌进 tool registry;`emitRunResult` 只接受一个 ResultProvider,从中读取 session_id、manifest、token 统计、warnings)。多模型下按下述边界拆分:
-
-- **每 reviewer 独立**:Agent、Runner、Session、CommentCollector、**tool registry**(collector 内嵌其中,必须各自构造)、CommentWorkerPool。缺少独立 registry 会让两个 agent 的评论写进同一个 collector,合并阶段失去归因基础。
-- **per-run 共享**:RetryCollector、RawHolder、git runner 的进程限流器、MCP client。共享句柄的并发安全性(尤其 MCP 会话的并发请求)MUST 在实现时验证;验证不通过则改为每 reviewer 复制。
-- **输出骨架**:仍以主 reviewer 的 ResultProvider 为骨架——`session_id`、manifest 取主 reviewer(manifest 的 reviewers 字段列出全部),token 统计与 warnings 聚合全部 reviewer。这样下游(JSON / SARIF / 文本)与 `emitRunResult` 的契约不变,合并只体现为评论列表与聚合数值。
-
-- 替代方案:引入一个显式的多模型 ResultProvider 包装层。被否:改动面扩散到全部输出路径,而收益只是"更对称"。
+次要 reviewer 失败 → 记录为警告,其余结果照常合并,退出码 0(部分结果仍是有价值的结果,与预算超限的 best-effort 姿态一致)。主模型失败 → 维持单模型现状语义(报错退出),不产生"无主结果的降级输出"。多模型 + `--resume` → 启动前明确报错:恢复路径的会话准入按单模型设计,v1 不扩展。
 
 ## Risks / Trade-offs
 
-- [并集带来误报增多(召回目标的直接代价)] → 每个 reviewer 管线内已有 REVIEW_FILTER;`found_by` 共识标注辅助人工分诊(两个模型都发现的优先看)。
-- [LLM 整合 pass 把不同发现错判为同一(丢失发现)] → 阈值保守(IoU 0.6、单行/多行不混配);错判风险与召回优先的目标权衡后接受;全覆盖校验兜住"静默丢 id"这一最坏形态。
-- [并发写 stdout 交错不可读] → D7 前缀;机器可读模式不受影响。
-- [预算耗尽截断副 reviewer] → 交付已完成部分 + warning,合并照常;不视为失败。
-- [session 文件数量随 reviewer 数翻倍] → v1 接受;manifest 汇总可查。
-- [成本 ≈ ×N] → 严格 opt-in,默认单模型;文档写明代价。
-- [两模型对同一问题给出不同行号 / category,合并后归因失真] → 行号差异由 IoU 吸收;category 失真(代表元的)不影响评论可用性,`found_by` 不受影响。
-- [超大 PR 下合并输入超出 prompt 预算] → 整合 pass 失败即保底:保留确定性预合并结果,评论不丢失;按路径分块的增量合并留待演进。
-- [两个 reviewer 共享 MCP client 会话的并发调用] → 实现时验证 SDK 的并发请求安全性(D10);不通过则按 reviewer 复制 MCP client,代价是子进程数翻倍。
+- 措辞差异大的同题发现会重复出现 → 确定性相似度的已知盲区,接受:多一条噪音,不丢一条真发现;LLM 合并 pass 是被明确否决的替代(每次运行多一次调用 + 一整个模板面)。
+- 同位置、内容巧合相似但确实不同的两个问题可能被误吞 → 相似度阈值(0.5)压低概率,但无 LLM 兜底,接受。
+- 并发交错使日志阅读变难 → Prefixed 标注缓解;串行更简单但被否决(墙钟时间)。
+- 共享预算下某个"快"模型可能占用量大头 → 聚合语义就是控制总花费,不追求 per-reviewer 公平;manifest 记录各方用量供诊断。
+- 两个模型对同一问题给出不同 severity 时取高者,可能整体抬高告警观感 → 与"宁多不丢"一致,接受。
 
 ## Migration Plan
 
-纯增量,无迁移:未配置 `additional_reviewers` 时行为与现状逐字节一致。回滚 = 删掉配置项(或 git revert);`found_by` 为可选字段,老版本下游自然忽略。
-
-## Open Questions
-
-(无——执行顺序、resume 语义、输出优先级均已在探索中与用户定稿;其余小项按推荐写入上文各 Decision。)
+纯增量,无迁移:旧配置文件不含 `reviewers`,行为与输出不变;写入新字段即启用。旧提案 artifacts 已删除并由本套替代,旧实现从未提交,无代码迁移对象。回滚 = 从配置中移除 `reviewers` 字段。

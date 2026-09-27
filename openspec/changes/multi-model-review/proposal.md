@@ -2,39 +2,37 @@
 
 ## Why
 
-部分变更集(安全敏感、高风险)需要尽可能高的 issue 召回率——ROADMAP 已把这个方向规划为 Ultra Mode(H2 2026):"用更多 token 消耗和 review 时间换显著更高的召回率",但未规定实现机制。当前 `ocr` 的整条 review 管线(plan、分组、逐组 review、filter、对抗性 pass)绑定在单一激活模型上,而不同模型的盲区互补:已归档的 adversarial-review-defaults 遥测证明,同一个模型跑第二遍就能多找出 2/5 的新发现,两个不同模型的互补收益理应更大。本 change 是 Ultra Mode 的第一个具体实现:多个模型各自独立完整评审,并集合并去重后输出。
+用户希望用多个模型交叉扫描同一份 diff 以提升发现召回,但此前立项的全量方案(6 需求 / 17 场景 / 22 任务,含 LLM 合并 pass)相对"配置几个模型一起扫、结果合并"的真实需求明显过重,已被整体推翻。本提案以最小范围重新立项:完整复用现有单模型 review 流程,只新增多 reviewer 配置、并发执行、确定性合并与来源归因。
 
 ## What Changes
 
-- 新增 `additional_reviewers` 配置项:`{provider, model}` 对象数组;主模型沿用现有 `provider` + `model` 字段,零迁移。每个 reviewer 复用 `providers` / `custom_providers` 中同名条目的 URL、协议、凭据,自身不携带任何秘密。配置校验拒绝指向不存在 provider 的条目与重复的 (provider, model) 对。
-- 新增可重复 flag `--reviewer provider/model`(按第一个斜杠切分,provider 名不允许含斜杠)用于单次追加额外 reviewer。
-- review 运行支持多 reviewer **并发**执行:每个 reviewer 拥有独立的 Runner、Session、CommentCollector;所有 Runner 共享一个原子聚合 token 计数器,`--max-tokens-budget` 按总账生效——超限后所有 reviewer 停止发起新请求(在途请求正常完成),已完成部分照常进入合并。进度输出按模型加前缀(如 `[ocr] [glm] ...`);机器可读输出不受影响(在合并之后生成)。
-- 新增跨模型合并阶段,分两层:
-  - 确定性预合并(纯 Go):同路径 + 行 span IoU > 0.6 **且内容信号一致**(同 category 与描述相似)才判重(位置判定复用 GitHub Action 脚本 `sameCommentSpan` 的思路;内容护栏防止"同位置的不同问题"被静默合并——GA 的纯位置判重只对同一模型自己的历史评论安全,跨模型会丢发现)。单行与多行评论不互判重复;位置匹配但内容不一致的对交给 LLM 整合 pass;
-  - LLM 整合 pass(复刻 scan `DEDUP_TASK` 形态):全部评论带稳定 `c-N` id 与模型归属打包,LLM 输出 `groups`(members + 可选 `merged_content` 融合描述),全覆盖校验(每个 id 恰好出现一次,否则整体作废保留预合并结果),best-effort 失败语义。
-- 评论新增可选字段 `found_by`(发现该评论的模型名并集);合并结果按 path + start_line 重排后走既有输出管线(JSON / SARIF / 文本,`found_by` 在 JSON 中输出)。
-- 失败降级:某个额外 reviewer 解析失败或中途失败、合并 pass 失败 → 记录 warning、交付其余结果、不改退出码(与对抗性 pass 的 best-effort 哲学一致)。
-- 多模型运行与 `--resume` 组合在 v1 显式报错,提示去掉额外 reviewer 或去掉 resume。
-- 默认行为完全不变:未配置 `additional_reviewers` 时保持单模型单管线。
+- `~/.opencodereview/config.json` 新增可选 `reviewers` 数组:每个条目以引用式(`{"provider": "name"}`,复用 `providers` 注册表凭证)或内联式(与 `llm` 段同构的端点对象)声明一个追加 reviewer;数组缺省或为空时,单模型行为与现状完全一致。
+- 多 reviewer 时并发执行:每个 reviewer 完整复用现有 review 流程(分组、计划、评审、过滤、对抗性 pass),互不等待。
+- 各 reviewer 的发现经确定性规则合并(位置 IoU 与内容相似度双条件),不做任何 LLM 合并调用;同位置同义发现收敛为一条,来源取并集。
+- 输出归因:JSON 输出中每条 finding 携带 `found_by`;终端文本输出在多模型运行时为每条发现追加来源标注行;单模型输出保持字节级不变。
+- 共享 token 预算:所有 reviewer 共用一个聚合预算账本,超限后全体停止派发新请求、在途请求跑完、已有结果照常合并,警告 + exit 0。
+- 并发运行时的进度行按 reviewer 标注,保持可归属。
+- 明确不做:无 CLI flag(`reviewers` 仅经配置文件)、`ocr config` 子命令不提供写入、`ocr llm test` 不校验追加端点连通性(理由与边界见 design)。
 
 ## Capabilities
 
 ### New Capabilities
 
-- `multi-model-review`: 多 reviewer 的配置与校验(`additional_reviewers`、`--reviewer`)、多模型并发执行与聚合预算、跨模型评论合并(确定性预合并 + LLM 整合 pass)、`found_by` 归因输出、副 reviewer 与合并的失败降级语义。
+- `multi-model-review`: 多 reviewer 的配置契约、并发执行与共享预算、确定性结果合并、输出归因与失败降级。
 
 ### Modified Capabilities
 
-(无——`review-prompting` 的需求不变:每个 reviewer 的管线内部行为,包括对抗性 pass 与 filter,完全照旧;本 change 只在其外层新增编排与合并。)
+无。单模型路径的需求不变:现有能力(含 review-prompting 的对抗性 pass)描述的是单次 review 运行的行为,多模型只是把同一流程组合执行多次,不改变任何既有需求。
 
 ## Impact
 
-- **代码**:
-  - `cmd/opencodereview`:配置结构体与校验(`Config` 新增 `AdditionalReviewers`)、`review_cmd` / `shared.go` 的 `loadLLMRuntime`(需支持按 reviewer 逐个解析 endpoint)、flag 注册;
-  - `internal/agent`:多 agent 并发编排(每模型一个 Agent)、跨模型合并器;
-  - `internal/model`:`LlmComment` 增加可选 `found_by` 字段;
-  - `internal/config/template`:新增 review 侧合并任务模板(命名与 prompt 随 design 定稿,形态对标 scan `DEDUP_TASK`);
-  - `internal/session`:reviewer 维度的会话归属。
-- **下游兼容**:JSON/SARIF schema 增加可选 `found_by`;JetBrains 扩展 `ignoreUnknownKeys = true` 天然容忍新字段;GitHub Action 发帖脚本与 `action.yml` 输入的展示适配延后(用户主用本地 CLI)。
-- **成本**:每增加一个 reviewer,token 消耗约 ×N;严格 opt-in,默认单模型不变。
-- **遥测**:新增 `merge.completed` / `merge.failed` 事件,运行事件增加 reviewer 维度。
+- 代码:
+  - `cmd/opencodereview`:`config_cmd.go` 增加 `reviewers` 字段;`review_cmd.go` 接入多 reviewer 编排;新增 `reviewers.go`(条目解析与校验)与 `multi_review.go`(并发编排)。
+  - `internal/llmloop`:共享 token 账本与预算闸门接入。
+  - `internal/stdout` 与 `internal/agent`:按 reviewer 标注的 progress writer 及其注入点。
+  - `internal/session`:manifest 记录 `reviewers` 与各方用量(多模型时才写入)。
+  - `internal/model`:`LlmComment` 增加 `FoundBy` 字段。
+  - 新增 `internal/merge`:确定性合并纯函数包。
+- 兼容性:单模型路径的行为与输出保持字节级一致;多模型与 `--resume` 组合在 v1 明确报错。
+- 文档:`pages/src/content/docs/{en,zh,ja,ko,ru}/configuration.md` 增补 `reviewers` 配置说明;`cli-reference.md` 因不新增 flag 基本不变。
+- 不改动的部分:评审流水线内部(分组、计划、过滤、对抗性 pass、压缩)、`internal/scan`、工具注册表。
