@@ -132,6 +132,7 @@ ocr r      [flags]   (alias)
 | `--model <name>` | — | — | 이 실행에 한해 해석된 LLM 모델을 덮어씁니다(예: `claude-opus-4-6`). |
 | `--max-git-procs <n>` | — | `16` | 동시에 띄울 git 서브프로세스의 최대 개수. |
 | `--tools <path>` | — | 내장 | 커스텀 JSON 도구 설정 파일 경로. 내장 도구 정의를 덮어씁니다. |
+| `--config <path>` | — | ~/.opencodereview/config.json | 이 실행에서 사용할 설정 파일 경로. 리뷰 중의 엔드포인트·언어·토큰 상한 읽기에 이 파일을 사용합니다(텔레메트리는 기본 경로의 설정을 계속 읽습니다). |
 
 > 모드 플래그는 함께 쓸 수 없습니다. `--from`/`--to`, `--commit`, 아무것도 주지
 > 않기(워크스페이스 모드) 중 하나만 고르세요. 섞어 쓰면 오류로 중단됩니다.
@@ -661,6 +662,23 @@ Examples:
 전달된 디스플레이가 없을 때, 또는 Linux에서 `DISPLAY`와 `WAYLAND_DISPLAY`가 모두
 없을 때 브라우저 열기를 건너뜁니다. 그 이유는 URL과 함께 출력됩니다. auto가 열지
 않지만 실제로는 브라우저에 닿을 수 있다면 `--open=always`를 사용하세요.
+
+## `ocr_ext` review {#ocr-ext-review}
+
+`ocr_ext`는 `ocr`과 함께 설치되는 컴패니언 바이너리입니다. `review` 명령은 프라이머리 모델과 설정 파일의 `reviewers` 배열의 각 리뷰어에 대해 표준 `ocr review`를 병렬로 실행하고, 결과를 하나의 리포트로 병합합니다(자세한 내용은 [설정 가이드](/docs/ko/configuration) 참조).
+
+### `ocr review`와의 플래그 차이
+
+| 플래그 | 차이 |
+|---|---|
+| `--format` | 병합 리포트 형식: `json`(기본값) 또는 `text`. v1에서는 `sarif` 미지원. |
+| `--output` | 병합 리포트를 stdout 대신 파일에 기록합니다. |
+| `--provider` / `--model` | 프라이머리 모델 선택에만 사용. 리뷰어는 항상 자신의 설정된 엔드포인트로 실행됩니다. |
+| `--resume` / `--preview` | 미지원. 자식 프로세스 실행 전에 오류로 종료합니다. |
+
+### 출력
+
+병합 리포트의 JSON(또는 text): 각 지적에는 `found_by`가 붙고, `sources` 블록에 각 모델의 role·지적 수·토큰 사용량·세션 ID가 기록됩니다. 리뷰어 실패는 경고(`reviewer_failed`)로 완화되며 나머지 결과는 그대로 병합됩니다. 프라이머리 모델 실패는 0이 아닌 코드로 종료합니다.
 
 ## `ocr version` {#ocr-version}
 

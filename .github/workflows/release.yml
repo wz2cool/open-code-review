@@ -46,16 +46,22 @@ jobs:
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           LD_FLAGS="-s -w -X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildDate=${BUILD_DATE}"
           BIN_NAME=opencodereview-${{ matrix.goos }}-${{ matrix.goarch }}
+          EXT_BIN_NAME=ocrext-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BIN_NAME="${BIN_NAME}.exe"
+            EXT_BIN_NAME="${EXT_BIN_NAME}.exe"
           fi
           go build -ldflags "${LD_FLAGS}" -o "${BIN_NAME}" ./cmd/opencodereview
+          go build -ldflags "${LD_FLAGS}" -o "${EXT_BIN_NAME}" ./cmd/ocrext
           echo "bin_name=${BIN_NAME}" >> $GITHUB_ENV
+          echo "ext_bin_name=${EXT_BIN_NAME}" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ${{ env.bin_name }}
+          path: |
+            ${{ env.bin_name }}
+            ${{ env.ext_bin_name }}
 
   release:
     needs: build
@@ -142,7 +148,7 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
-        run: sha256sum opencodereview-* | sort > sha256sum.txt
+        run: sha256sum opencodereview-* ocrext-* | sort > sha256sum.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
@@ -150,6 +156,7 @@ jobs:
           body: ${{ steps.notes.outputs.body }}
           files: |
             opencodereview-*
+            ocrext-*
             sha256sum.txt
 
       - name: Attest release artifacts
@@ -157,6 +164,7 @@ jobs:
         with:
           subject-path: |
             opencodereview-*
+            ocrext-*
             sha256sum.txt
 
   npm-publish:

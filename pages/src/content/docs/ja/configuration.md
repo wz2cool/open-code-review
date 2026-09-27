@@ -390,6 +390,29 @@ ocr config set language 中文
 ocr config set language English
 ```
 
+## マルチモデルレビュー(reviewers)
+
+`ocr` と一緒にインストールされる `ocr_ext` は、複数のモデルに同じ diff をクロスレビューさせます。プライマリモデルと各レビュアーに対して標準の `ocr review` を並行に実行し、発見内容を決定論的に 1 つのレポートにマージします。各指摘には `found_by`(報告したモデル)が付き、JSON レポートにはモデルごとの統計を含む `sources` ブロックが含まれます。
+
+レビュアーは共有の `~/.opencodereview/config.json` で宣言します:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+ルールと動作:
+
+- 各エントリーは `llm` セクションと同じ形です: `url`、`model`、`protocol`、資格情報は `auth_token` / `auth_token_cmd` を使います。フィールド名に注意 — プロバイダーエントリーの `api_key` / `api_key_cmd` では**ありません**。
+- エンドポイントとモデルがプライマリモデルと同一のエントリーは破棄されます。
+- 各子プロセスは完全な標準 `ocr review` 実行です(独立したセッション・予算・フィルターパス)。レビュアーのエンドポイントを運ぶ一時設定ファイルは 0600 で作成され、実行後に削除されます。
+- `ocr review` 自体は `reviewers` を読みません — 設定しなければ何も変わりません。
+- v1 では非対応: SARIF 出力、`--resume`、`--preview`。
+
 ## 関連項目
 
 - [クイックスタート](../quickstart/)——最小限のセットアップと初回のレビュー。

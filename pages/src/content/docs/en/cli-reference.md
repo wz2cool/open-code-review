@@ -133,6 +133,7 @@ staged + unstaged + untracked changes in the current directory's repo.
 | `--model <name>` | — | — | Override the resolved LLM model for this run (e.g., `claude-opus-4-6`). |
 | `--max-git-procs <n>` | — | `16` | Maximum number of concurrent git subprocesses. |
 | `--tools <path>` | — | embedded | Path to a custom JSON tool-config file. Overrides the embedded tool definitions. |
+| `--config <path>` | — | ~/.opencodereview/config.json | Path to the config file for this run. The endpoint, language, and token-limit reads of the review use this file (telemetry keeps reading the default config path). |
 
 > Mode flags are mutually exclusive: pass either `--from`/`--to`, or
 > `--commit`, or neither (workspace mode). Mixing them is a hard error.
@@ -690,6 +691,25 @@ browser-friendly UI. See [Session Viewer](../viewer/).
 `SSH_CONNECTION` is set with no display forwarded, or when Linux has neither
 `DISPLAY` nor `WAYLAND_DISPLAY`; the reason is printed alongside the URL. Use
 `--open=always` where auto declines but a browser is in fact reachable.
+
+## `ocr_ext` review
+
+`ocr_ext` is a companion binary installed alongside `ocr`. Its `review` command runs the standard `ocr review` once for the primary model and once per reviewer from the config file's `reviewers` array — all in parallel — then merges the findings into a single report (see [Multi-model review](/docs/configuration#multi-model-review-reviewers)).
+
+### Flags
+
+The same flags as `ocr review`, with these differences:
+
+| Flag | Difference |
+|---|---|
+| `--format` | `json` (default) or `text` of the merged report; `sarif` is not supported in v1. |
+| `--output` | Writes the merged report instead of stdout. |
+| `--provider` / `--model` | Select the primary model only; reviewers always run with their configured endpoint. |
+| `--resume` / `--preview` | Not supported; the command exits before dispatching. |
+
+### Output
+
+JSON (or text) of the merged report: every finding carries `found_by`, and a `sources` block lists each model with its role, finding count, token usage, and session id. A failed reviewer degrades to a warning (`reviewer_failed`) while the remaining results are still merged; a failed primary model exits non-zero.
 
 ## `ocr version`
 

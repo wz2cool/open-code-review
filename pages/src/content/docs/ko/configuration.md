@@ -298,6 +298,29 @@ ocr config set language 中文
 ocr config set language English
 ```
 
+## 멀티 모델 리뷰(reviewers) {#multi-model-review}
+
+`ocr`과 함께 설치되는 `ocr_ext`는 여러 모델이 같은 diff를 교차 리뷰하게 합니다: 프라이머리 모델과 각 리뷰어에 대해 표준 `ocr review`를 병렬로 실행한 뒤, 발견 사항을 결정론적으로 하나의 리포트로 병합합니다. 각 지적에는 `found_by`(보고한 모델)가 붙고, JSON 리포트에는 모델별 통계가 담긴 `sources` 블록이 포함됩니다.
+
+리뷰어는 공유하는 `~/.opencodereview/config.json`에 선언합니다:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+규칙과 동작:
+
+- 각 항목은 `llm` 섹션과 동일한 형태입니다: `url`, `model`, `protocol`, 자격 증명은 `auth_token` / `auth_token_cmd`. 필드 이름에 주의 — provider 항목의 `api_key` / `api_key_cmd`가 **아닙니다**.
+- 엔드포인트와 모델이 프라이머리 모델과 동일한 항목은 제거됩니다.
+- 각 자식 프로세스는 완전한 표준 `ocr review` 실행입니다(독립 세션, 독립 예산, 독립 필터 패스). 리뷰어 엔드포인트를 담는 임시 설정 파일은 0600으로 생성되고 실행 후 삭제됩니다.
+- `ocr review` 자체는 `reviewers`를 읽지 않습니다 — 설정하지 않으면 아무것도 바뀌지 않습니다.
+- v1에서 미지원: SARIF 출력, `--resume`, `--preview`.
+
 ## 관련 문서 {#see-also}
 
 - [빠른 시작](../quickstart/) — 최소 설정과 첫 리뷰.

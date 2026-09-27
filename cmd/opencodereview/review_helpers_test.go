@@ -218,7 +218,7 @@ func TestPreviewMaxTokensMatchesRun(t *testing.T) {
 				t.Fatalf("resolveMaxTokens: %v", err)
 			}
 
-			got, err := previewMaxTokens(cc.Template.MaxTokens, tt.cliTokens)
+			got, err := previewMaxTokens(cc.Template.MaxTokens, tt.cliTokens, "")
 			if err != nil {
 				t.Fatalf("previewMaxTokens: %v", err)
 			}

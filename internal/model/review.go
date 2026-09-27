@@ -18,6 +18,10 @@ type LlmComment struct {
 	// Severity indicates the importance of the finding. One of:
 	// critical, high, medium, low.
 	Severity string `json:"severity,omitempty"`
+	// FoundBy lists the model names whose review produced this comment. Only
+	// merged multi-model output populates it; single-model runs leave it nil
+	// so their JSON output stays byte-identical.
+	FoundBy []string `json:"found_by,omitempty"`
 }
 
 // CodeReviewResult holds raw LLM-generated review suggestion for a code segment.

@@ -152,7 +152,7 @@ func executeScan(opts scanOptions) (retErr error) {
 	scanPaths := splitPaths(opts.paths)
 
 	if opts.preview {
-		maxTokens, err := previewMaxTokens(scanTpl.MaxTokens, opts.maxTokens)
+		maxTokens, err := previewMaxTokens(scanTpl.MaxTokens, opts.maxTokens, "")
 		if err != nil {
 			return err
 		}
@@ -166,7 +166,7 @@ func executeScan(opts scanOptions) (retErr error) {
 		return err
 	}
 
-	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, llm.ResolveOptions{
+	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, "", llm.ResolveOptions{
 		Provider: opts.provider,
 		Model:    opts.model,
 	})

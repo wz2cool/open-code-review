@@ -168,6 +168,31 @@ ocr delegate preview
 ocr delegate rule src/main.go src/handler.go
 ```
 
+### マルチモデルレビュー
+
+複数のモデルに同じ diff をクロスレビューさせます。`ocr` と一緒にインストールされる `ocr_ext` バイナリは、プライマリモデルと設定済みの各レビュアーに対して標準の `ocr review` を並行に実行し、発見内容を出典付きの 1 つのレポートにマージします。
+
+`~/.opencodereview/config.json` に `reviewers` 配列を追加します。各エントリーは `llm` セクションと同じ形で、独自のエンドポイントを持ちます:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+```bash
+ocr_ext review --from main --to feature-branch
+```
+
+マージは決定論的です(位置 + 内容の類似度、LLM 呼び出しは行わない)。各指摘には `found_by`(報告したモデル)が付き、JSON 出力にはモデルごとの統計が含まれます。注意点:
+
+- エントリーのフィールドは `llm` セクションに準拠します: 認証情報は `auth_token` / `auth_token_cmd` — プロバイダーレジストリの `api_key` / `api_key_cmd` ではありません。
+- `ocr review` 自体は `reviewers` を読まないため、シングルモデルのワークフローには影響しません。
+- `ocr_ext review` は現時点で SARIF 出力、`--resume`、`--preview` に対応していません。
+
 ## ドキュメント
 
 完全なドキュメントは **[open-codereview.ai/docs](https://open-codereview.ai/docs)** にあります：

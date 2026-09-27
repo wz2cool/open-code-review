@@ -26,6 +26,7 @@ temp/
 !bin/ocr.js
 bin/ocr
 bin/opencodereview
+/ocrext
 
 /opencodereview
 

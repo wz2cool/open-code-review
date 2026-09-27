@@ -168,6 +168,31 @@ ocr delegate preview
 ocr delegate rule src/main.go src/handler.go
 ```
 
+### 多模型评审
+
+让多个模型交叉评审同一份 diff。伴随 `ocr` 一起安装的 `ocr_ext` 会并行地为你的主模型和每个已配置的 reviewer 各运行一次标准 `ocr review`,再把发现合并为一份带来源归因的报告。
+
+在 `~/.opencodereview/config.json` 中添加 `reviewers` 数组。每个条目与 `llm` 段完全同构,自带端点:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+```bash
+ocr_ext review --from main --to feature-branch
+```
+
+合并是确定性的(位置 + 内容相似度,不额外调用 LLM);每条发现带 `found_by`(报告它的模型),JSON 输出含各来源统计。注意:
+
+- 条目字段沿用 `llm` 段:凭证用 `auth_token` / `auth_token_cmd`,而不是 provider 注册表的 `api_key` / `api_key_cmd`。
+- `ocr review` 本身不读取 `reviewers`,单模型工作流不受影响。
+- `ocr_ext review` 暂不支持 SARIF 输出、`--resume` 和 `--preview`。
+
 ## 文档
 
 完整文档见 **[open-codereview.ai/docs](https://open-codereview.ai/docs)**：

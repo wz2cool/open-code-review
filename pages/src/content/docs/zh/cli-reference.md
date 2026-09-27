@@ -128,6 +128,7 @@ unstaged + untracked 变更。
 | `--model <name>` | — | — | 为本次运行覆盖已解析出的 LLM model（如 `claude-opus-4-6`）。 |
 | `--max-git-procs <n>` | — | `16` | 并发 git 子进程的最大数。 |
 | `--tools <path>` | — | 内嵌 | 自定义 JSON 工具配置文件路径。覆盖内嵌工具定义。 |
+| `--config <path>` | — | ~/.opencodereview/config.json | 本次运行的配置文件路径。评审中的端点、语言与 token 上限读取均使用该文件(遥测仍读取默认路径的配置)。 |
 
 > 模式参数互斥：传 `--from`/`--to`，或 `--commit`，或都不传（工作区模式）。
 > 混用会直接报错。
@@ -639,6 +640,23 @@ Examples:
 `SSH_CONNECTION` 且没有转发显示环境、或 Linux 上 `DISPLAY` 与 `WAYLAND_DISPLAY`
 均为空；跳过的原因会与 URL 一并打印。若 auto 拒绝但其实有可用浏览器，用
 `--open=always`。
+
+## `ocr_ext` review
+
+`ocr_ext` 是随 `ocr` 一起安装的伴随二进制。它的 `review` 命令并行地为主模型与配置文件 `reviewers` 数组中的每个 reviewer 各运行一次标准 `ocr review`,再将发现合并为单一报告(见[多模型评审](/docs/zh/configuration))。
+
+### 与 `ocr review` 的参数差异
+
+| 参数 | 差异 |
+|---|---|
+| `--format` | 合并报告的格式:`json`(默认)或 `text`;v1 不支持 `sarif`。 |
+| `--output` | 将合并报告写入文件而非 stdout。 |
+| `--provider` / `--model` | 仅选择主模型;reviewer 始终使用其条目中配置的端点。 |
+| `--resume` / `--preview` | 不支持,命令在派发子进程前报错。 |
+
+### 输出
+
+合并报告的 JSON(或 text):每条发现携带 `found_by`,`sources` 块列出每个模型的 role、发现数、token 用量与会话 id。reviewer 失败降级为警告(`reviewer_failed`),其余结果照常合并;主模型失败则以非零码退出。
 
 ## `ocr version`
 

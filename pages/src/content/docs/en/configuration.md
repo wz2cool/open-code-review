@@ -394,6 +394,29 @@ ocr config set language 中文
 ocr config set language English
 ```
 
+## Multi-model review (reviewers)
+
+The companion `ocr_ext` binary installed alongside `ocr` cross-reviews the same diff with several models: it runs the standard `ocr review` once for your primary model and once per reviewer, all in parallel, then merges the findings deterministically into a single report. Every finding carries `found_by` (the models that reported it), and the JSON report includes a `sources` block with per-model stats.
+
+Reviewers are declared in the shared `~/.opencodereview/config.json`:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+Rules and behavior:
+
+- Each entry is shaped exactly like the [`llm` section](#configuring-a-model): `url`, `model`, `protocol`, and credentials via `auth_token` / `auth_token_cmd`. Note the field names — they are **not** the `api_key` / `api_key_cmd` used by provider entries.
+- Entries whose endpoint and model are identical to the primary model are dropped.
+- Every child is a full standard `ocr review` run (own session, own budget, own filter pass); the temp config carrying a reviewer's endpoint is created `0600` and removed after the run.
+- `ocr review` itself never reads `reviewers` — without it, nothing changes.
+- Not supported in v1: SARIF output, `--resume`, `--preview`.
+
 ## See Also
 
 - [QuickStart](../quickstart/) — minimal setup and first review.

@@ -5,6 +5,8 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -173,7 +175,7 @@ func TestLlmComment_JSON(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got != c {
+	if !reflect.DeepEqual(got, c) {
 		t.Errorf("roundtrip mismatch:\n  got  %+v\n  want %+v", got, c)
 	}
 }
@@ -198,5 +200,30 @@ func TestCodeReviewResult_JSON(t *testing.T) {
 
 	if got != r {
 		t.Errorf("roundtrip mismatch:\n  got  %+v\n  want %+v", got, r)
+	}
+}
+
+func TestLlmComment_FoundByOmittedWhenEmpty(t *testing.T) {
+	c := LlmComment{Path: "a.go", Content: "check this"}
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "found_by") {
+		t.Errorf("empty FoundBy must be omitted, got: %s", data)
+	}
+
+	c.FoundBy = []string{"gpt-5", "claude-opus-4-6"}
+	data, err = json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got LlmComment
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.FoundBy) != 2 || got.FoundBy[0] != "gpt-5" || got.FoundBy[1] != "claude-opus-4-6" {
+		t.Errorf("found_by roundtrip mismatch, got: %v", got.FoundBy)
 	}
 }

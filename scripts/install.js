@@ -217,11 +217,18 @@ async function main() {
     }
 
     let verified = false;
+    // Match the full asset filename: a substring check on `-${os}-${arch}`
+    // would also hit the ocrext-* companion entry in sha256sum.txt.
+    const expectedName = `opencodereview-${os}-${arch}${IS_WINDOWS ? ".exe" : ""}`;
     for (const line of shaContent.split("\n")) {
       const trimmed = line.trim();
-      if (trimmed.includes(`-${os}-${arch}`)) {
-        const expectedSha = trimmed.split(/\s+/)[0].toLowerCase();
-        if (expectedSha) {
+      if (!trimmed) continue;
+      const fields = trimmed.split(/\s+/);
+      if (fields.length < 2 || fields[1] !== expectedName) {
+        continue;
+      }
+      const expectedSha = fields[0].toLowerCase();
+      if (expectedSha) {
           if (actualSha !== expectedSha) {
             try { fs.unlinkSync(binaryDest); } catch (_) {}
             throw new Error(
@@ -231,7 +238,6 @@ async function main() {
           info("Checksum verified.");
           verified = true;
           break;
-        }
       }
     }
     if (!verified) {

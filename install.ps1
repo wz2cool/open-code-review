@@ -1,4 +1,5 @@
-# Install the ocr (Open Code Review) CLI from GitHub releases on Windows.
+# Install the ocr (Open Code Review) CLI and the ocr_ext companion binary
+# from GitHub releases on Windows.
 #   irm https://open-codereview.ai/install.ps1 | iex
 # Prefer to inspect first:
 #   irm https://open-codereview.ai/install.ps1 -OutFile install.ps1
@@ -94,6 +95,8 @@ try {
 $Repo = 'alibaba/open-code-review'
 $Bin = 'ocr.exe'
 $AssetPrefix = 'opencodereview'
+$ExtBin = 'ocr_ext.exe'
+$ExtAssetPrefix = 'ocrext'
 $DefaultInstallDir = Join-Path $env:LOCALAPPDATA 'Programs\ocr'
 $InstallDir = if (-not [string]::IsNullOrWhiteSpace($env:OCR_INSTALL_DIR)) {
     $env:OCR_INSTALL_DIR.Trim()
@@ -104,7 +107,6 @@ $InstallDir = if (-not [string]::IsNullOrWhiteSpace($env:OCR_INSTALL_DIR)) {
 $arch = Get-OcrArch
 $os = 'windows'
 $Version = Resolve-OcrVersion $Repo
-$asset = "$AssetPrefix-$os-$arch.exe"
 $Mirror = if (-not [string]::IsNullOrWhiteSpace($env:OCR_GITHUB_MIRROR)) {
     $env:OCR_GITHUB_MIRROR.Trim() -replace '^https?://' -replace '/$'
 } else {
@@ -123,16 +125,34 @@ if ($Mirror) {
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("ocr-install-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
-try {
+# Get-OcrAsset downloads one release asset and verifies it against the
+# already fetched sha256sum.txt. Returns the verified path, or $null when the
+# asset is absent (releases older than ocr_ext carry no companion asset).
+# A checksum mismatch is always fatal.
+function Get-OcrAsset([string]$AssetPrefix) {
+    $asset = "$AssetPrefix-$os-$arch.exe"
     $assetPath = Join-Path $tmp $asset
-    $sumPath = Join-Path $tmp 'sha256sum.txt'
 
-    Write-Host "downloading $Bin $Version ($os/$arch)..."
+    Write-Host "downloading $asset..."
     try {
         Invoke-WebRequest -Uri "$base/$asset" -OutFile $assetPath -UseBasicParsing -TimeoutSec 1800
     } catch {
-        Err "download failed: $base/$asset"
+        return $null
     }
+
+    $want = Get-ChecksumFromFile $sumPath $asset
+    if ([string]::IsNullOrEmpty($want)) {
+        return $null
+    }
+    $got = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $want) {
+        Err "checksum mismatch for $asset (got $got, want $want)"
+    }
+    return $assetPath
+}
+
+try {
+    $sumPath = Join-Path $tmp 'sha256sum.txt'
 
     try {
         Invoke-WebRequest -Uri "$base/sha256sum.txt" -OutFile $sumPath -UseBasicParsing -TimeoutSec 15
@@ -140,18 +160,25 @@ try {
         Err 'sha256sum.txt download failed'
     }
 
-    $want = Get-ChecksumFromFile $sumPath $asset
-    if ([string]::IsNullOrEmpty($want)) {
-        Err "no checksum entry for $asset in sha256sum.txt"
+    # Fetch and verify both assets before installing either, so a failed run
+    # cannot leave the two binaries on different versions.
+    $primaryPath = Get-OcrAsset $AssetPrefix
+    if ([string]::IsNullOrEmpty($primaryPath)) {
+        Err "download failed: $AssetPrefix-$os-$arch.exe"
     }
-    $got = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($got -ne $want) {
-        Err "checksum mismatch for $asset (got $got, want $want)"
+    $extPath = Get-OcrAsset $ExtAssetPrefix
+    $installExt = -not [string]::IsNullOrEmpty($extPath)
+    if (-not $installExt) {
+        Write-Host "note: $ExtBin not found in this release; only $Bin is updated"
     }
 
-    Install-OcrBinary $assetPath $InstallDir $Bin
-
+    Install-OcrBinary $primaryPath $InstallDir $Bin
     Write-Host "installed $Bin $Version -> $InstallDir\$Bin"
+    if ($installExt) {
+        Install-OcrBinary $extPath $InstallDir $ExtBin
+        Write-Host "installed $ExtBin $Version -> $InstallDir\$ExtBin"
+    }
+
     Show-PostInstallPathNotice $Bin $InstallDir
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -5,6 +5,7 @@
 	license-check license-add english-check
 
 BINARY_NAME := opencodereview
+EXT_BINARY_NAME := ocrext
 GO          := go
 DIST_DIR    := ./dist
 
@@ -26,11 +27,15 @@ define BUILD_PLATFORM
 	GOOS=$(1) GOARCH=$(2) CGO_ENABLED=0 $(GO) build -ldflags "$(RELEASE_LD_FLAGS)" \
 		-o $(DIST_DIR)/$(BINARY_NAME)-$(1)-$(2)$(3) \
 		./cmd/opencodereview
+	GOOS=$(1) GOARCH=$(2) CGO_ENABLED=0 $(GO) build -ldflags "$(RELEASE_LD_FLAGS)" \
+		-o $(DIST_DIR)/$(EXT_BINARY_NAME)-$(1)-$(2)$(3) \
+		./cmd/ocrext
 endef
 
 # ── Development targets ──────────────────────────────────────────────────────
 build:
 	$(GO) build -ldflags "$(LD_FLAGS)" -o $(DIST_DIR)/$(BINARY_NAME) ./cmd/opencodereview
+	$(GO) build -ldflags "$(LD_FLAGS)" -o $(DIST_DIR)/$(EXT_BINARY_NAME) ./cmd/ocrext
 
 # No node_modules filter is needed for the docs site: pages/go.mod puts it in a
 # module of its own, so `go list ./...` skips that subtree entirely -- see that
@@ -108,7 +113,7 @@ build-all: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-a
 
 # Generate SHA256 checksums for all release binaries
 sha256sum: build-all
-	cd $(DIST_DIR) && shasum -a 256 $(BINARY_NAME)-* | sort > sha256sum.txt
+	cd $(DIST_DIR) && shasum -a 256 $(BINARY_NAME)-* $(EXT_BINARY_NAME)-* | sort > sha256sum.txt
 
 # Full release: clean → build all platforms → checksums
 dist: clean build-all sha256sum

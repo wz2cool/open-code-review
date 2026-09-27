@@ -168,6 +168,31 @@ ocr delegate preview
 ocr delegate rule src/main.go src/handler.go
 ```
 
+### Мульти-модельное ревью
+
+Заставьте несколько моделей кросс-ревьюить один и тот же diff. Сопутствующий бинарный файл `ocr_ext` (устанавливается вместе с `ocr`) параллельно запускает стандартный `ocr review` для вашей основной модели и для каждого настроенного ревьюера, а затем объединяет находки в единый отчёт с указанием источников.
+
+Добавьте массив `reviewers` в `~/.opencodereview/config.json`. Каждая запись имеет ту же форму, что и секция `llm`, и несёт свой эндпоинт:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+```bash
+ocr_ext review --from main --to feature-branch
+```
+
+Объединение детерминировано (позиция + схожесть содержания, без дополнительного LLM-вызова); каждая находка содержит `found_by` с перечнем моделей, а JSON-вывод включает статистику по каждой модели. Примечания:
+
+- Поля записей следуют секции `llm`: учётные данные — `auth_token` / `auth_token_cmd`, а **не** `api_key` / `api_key_cmd` из реестра провайдеров.
+- Сам `ocr review` не читает `reviewers`, поэтому одноподельные рабочие процессы не затронуты.
+- SARIF-вывод, `--resume` и `--preview` пока недоступны в `ocr_ext review`.
+
 ## Документация
 
 Полная документация доступна на **[open-codereview.ai/docs](https://open-codereview.ai/docs)**:

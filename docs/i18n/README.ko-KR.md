@@ -168,6 +168,31 @@ ocr delegate preview
 ocr delegate rule src/main.go src/handler.go
 ```
 
+### 멀티 모델 리뷰
+
+여러 모델이 같은 diff를 교차 리뷰하도록 합니다. `ocr`과 함께 설치되는 `ocr_ext` 바이너리는 프라이머리 모델과 설정된 각 리뷰어에 대해 표준 `ocr review`를 병렬로 실행한 뒤, 발견 사항을 출처 속성과 함께 하나의 리포트로 병합합니다.
+
+`~/.opencodereview/config.json`에 `reviewers` 배열을 추가하세요. 각 항목은 `llm` 섹션과 동일한 형태이며 자체 엔드포인트를 가집니다:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+```bash
+ocr_ext review --from main --to feature-branch
+```
+
+병합은 결정적입니다(위치 + 내용 유사도, LLM 호출 없음). 각 지적에는 `found_by`(해당 지적을 보고한 모델)가 붙고, JSON 출력에 모델별 통계가 포함됩니다. 참고:
+
+- 항목 필드는 `llm` 섹션을 따릅니다: 자격 증명은 `auth_token` / `auth_token_cmd` — provider 레지스트리의 `api_key` / `api_key_cmd`가 아닙니다.
+- `ocr review` 자체는 `reviewers`를 읽지 않으므로 단일 모델 워크플로는 영향을 받지 않습니다.
+- `ocr_ext review`는 아직 SARIF 출력, `--resume`, `--preview`를 지원하지 않습니다.
+
 ## Documentation
 
 전체 문서는 **[open-codereview.ai/docs](https://open-codereview.ai/docs)** 에서 확인할 수 있습니다:

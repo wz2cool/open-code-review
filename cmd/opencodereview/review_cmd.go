@@ -42,6 +42,7 @@ type reviewOptions struct {
 	backgroundFile        string
 	provider              string
 	model                 string
+	configPath            string
 	concurrency           int
 	concurrentTaskTimeout int
 	maxTools              int
@@ -133,6 +134,14 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		}
 	}()
 
+	// An explicit --config must point at a real file: silently falling back to
+	// the default path (or env strategies) would hide a typo'd path.
+	if opts.configPath != "" {
+		if _, err := os.Stat(opts.configPath); err != nil {
+			return fmt.Errorf("--config: %w", err)
+		}
+	}
+
 	contentRef, _ := tool.ParseReviewMode(opts.from, opts.to, opts.commit).RefValue(opts.to, opts.commit)
 	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, contentRef, opts.maxTools, opts.maxGitProcs, true)
 	if err != nil {
@@ -160,7 +169,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		return err
 	}
 
-	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, llm.ResolveOptions{
+	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, opts.configPath, llm.ResolveOptions{
 		Provider: opts.provider,
 		Model:    opts.model,
 	})
@@ -502,7 +511,7 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 }
 
 func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOptions, out io.Writer) error {
-	maxTokens, err := previewMaxTokens(cc.Template.MaxTokens, opts.maxTokens)
+	maxTokens, err := previewMaxTokens(cc.Template.MaxTokens, opts.maxTokens, opts.configPath)
 	if err != nil {
 		return err
 	}

@@ -94,7 +94,9 @@ jobs:
           echo "PASS: Coverage ${COVERAGE}% meets 90% threshold"
 
       - name: Build
-        run: go build -o ./opencodereview ./cmd/opencodereview
+        run: |
+          go build -o ./opencodereview ./cmd/opencodereview
+          go build -o ./ocrext ./cmd/ocrext
 
       - name: Smoke test
         run: |
@@ -110,7 +112,10 @@ jobs:
           echo "$HELP" | grep -q "viewer"
           echo "$HELP" | grep -q "session"
           echo "$HELP" | grep -q "rules"
-          rm -f ./opencodereview
+          ./ocrext version | grep -q "ocr_ext"
+          EXT_HELP=$(./ocrext --help)
+          echo "$EXT_HELP" | grep -q "review"
+          rm -f ./opencodereview ./ocrext
 
   # Runs the suite natively on Windows, which the cross-compile job below cannot
   # do: it only proves the windows arms of the build-tag splits compile. GitHub
@@ -143,7 +148,9 @@ jobs:
         run: npm run test:launcher
 
       - name: Build
-        run: go build -o opencodereview.exe ./cmd/opencodereview
+        run: |
+          go build -o opencodereview.exe ./cmd/opencodereview
+          go build -o ocrext.exe ./cmd/ocrext
 
       # Same assertions as the Linux smoke test, under git-bash so the script is
       # shared verbatim rather than reimplemented in PowerShell.
@@ -162,7 +169,10 @@ jobs:
           echo "$HELP" | grep -q "viewer"
           echo "$HELP" | grep -q "session"
           echo "$HELP" | grep -q "rules"
-          rm -f ./opencodereview.exe
+          ./ocrext.exe version | grep -q "ocr_ext"
+          EXT_HELP=$(./ocrext.exe --help)
+          echo "$EXT_HELP" | grep -q "review"
+          rm -f ./opencodereview.exe ./ocrext.exe
 
   cross-compile:
     runs-on: self-hosted

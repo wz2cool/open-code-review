@@ -33,7 +33,7 @@ func TestLoadLLMRuntime_Success(t *testing.T) {
 	t.Setenv("OCR_LLM_MODEL", "test-model")
 
 	tpl := loadTestTemplate(t)
-	rt, err := loadLLMRuntime(tpl, "", llm.ResolveOptions{})
+	rt, err := loadLLMRuntime(tpl, "", "", llm.ResolveOptions{})
 	if err != nil {
 		t.Fatalf("loadLLMRuntime error: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestLoadLLMRuntime_Success(t *testing.T) {
 func TestLoadLLMRuntime_BadToolConfig(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	tpl := loadTestTemplate(t)
-	_, err := loadLLMRuntime(tpl, filepath.Join(t.TempDir(), "no-such-tools.json"), llm.ResolveOptions{})
+	_, err := loadLLMRuntime(tpl, filepath.Join(t.TempDir(), "no-such-tools.json"), "", llm.ResolveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "load tools") {
 		t.Fatalf("err = %v, want load-tools failure", err)
 	}
@@ -80,7 +80,7 @@ func TestLoadLLMRuntime_UnresolvableEndpoint(t *testing.T) {
 	t.Setenv("ANTHROPIC_MODEL", "")
 
 	tpl := loadTestTemplate(t)
-	_, err := loadLLMRuntime(tpl, "", llm.ResolveOptions{})
+	_, err := loadLLMRuntime(tpl, "", "", llm.ResolveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "resolve LLM endpoint") {
 		t.Fatalf("err = %v, want resolve-endpoint failure", err)
 	}
@@ -100,7 +100,7 @@ func TestLoadLLMRuntime_BadAppConfig(t *testing.T) {
 	}
 
 	tpl := loadTestTemplate(t)
-	_, err := loadLLMRuntime(tpl, "", llm.ResolveOptions{})
+	_, err := loadLLMRuntime(tpl, "", "", llm.ResolveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "load app config") {
 		t.Fatalf("err = %v, want load-app-config failure", err)
 	}

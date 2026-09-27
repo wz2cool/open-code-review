@@ -354,6 +354,29 @@ ocr config set language 中文
 ocr config set language English
 ```
 
+## 多模型评审(reviewers)
+
+随 `ocr` 一起安装的 `ocr_ext` 可以让多个模型交叉评审同一份 diff:它并行地为主模型与每个 reviewer 各运行一次标准 `ocr review`,再把发现确定性合并为一份报告。每条发现携带 `found_by`(报告它的模型),JSON 报告含 `sources` 块记录各模型的统计。
+
+reviewer 声明在共享的 `~/.opencodereview/config.json` 中:
+
+```json
+{
+  "llm": { "url": "https://api.openai.com/v1", "auth_token": "sk-...", "model": "gpt-5", "protocol": "openai" },
+  "reviewers": [
+    { "url": "https://api.deepseek.com/v1", "auth_token": "sk-...", "model": "deepseek-chat", "protocol": "openai" }
+  ]
+}
+```
+
+规则与行为:
+
+- 每个条目与 `llm` 段完全同构:`url`、`model`、`protocol`,凭证用 `auth_token` / `auth_token_cmd`。注意字段名——**不是** provider 条目的 `api_key` / `api_key_cmd`。
+- 与主模型端点和模型完全相同的条目会被丢弃。
+- 每个子进程都是一次完整的标准 `ocr review`(独立 session、独立预算、独立过滤 pass);携带 reviewer 端点的临时配置以 0600 权限创建,运行结束后删除。
+- `ocr review` 本身不读取 `reviewers`——不配置它就没有任何变化。
+- v1 暂不支持:SARIF 输出、`--resume`、`--preview`。
+
 ## 另见
 
 - [快速开始](../quickstart/)——最小化设置与首次评审。

@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 alibaba/open-code-review Contributors
 
-# Install the ocr (Open Code Review) CLI from GitHub releases.
+# Install the ocr (Open Code Review) CLI and the ocr_ext companion binary
+# from GitHub releases.
 #   curl -fsSL https://open-codereview.ai/install.sh | sh
 # Prefer to inspect first:
 #   curl -fsSL https://open-codereview.ai/install.sh -o install.sh
@@ -16,6 +17,8 @@ main() {
   REPO="alibaba/open-code-review"
   BIN="ocr"
   ASSET_PREFIX="opencodereview"
+  EXT_BIN="ocr_ext"
+  EXT_ASSET_PREFIX="ocrext"
   INSTALL_DIR="${OCR_INSTALL_DIR:-/usr/local/bin}"
   VERSION="${OCR_VERSION:-}"
 
@@ -42,7 +45,6 @@ main() {
     [ -n "$VERSION" ] || err "could not resolve latest release tag"
   fi
 
-  asset="${ASSET_PREFIX}-${os}-${arch}"
   prefix="$(printf '%s' "${OCR_GITHUB_MIRROR:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   prefix="${prefix#https://}"
   prefix="${prefix#http://}"
@@ -57,22 +59,46 @@ main() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' INT TERM EXIT
 
-  printf 'downloading %s %s (%s/%s)...\n' "$BIN" "$VERSION" "$os" "$arch"
-  curl -fL --progress-bar --connect-timeout 5 --speed-limit 1024 --speed-time 30 -o "$tmp/$asset" "$base/$asset" ||
-    err "download failed: $base/$asset"
-
   curl -fsSL --connect-timeout 5 --max-time 15 -o "$tmp/sha256sum.txt" "$base/sha256sum.txt" ||
     err "sha256sum.txt download failed"
 
-  want="$(awk -v a="$asset" '$2 == a {print tolower($1)}' "$tmp/sha256sum.txt")"
-  [ -n "$want" ] || err "no checksum entry for $asset in sha256sum.txt"
-  got="$(sha256 "$tmp/$asset" | awk '{print tolower($1)}')"
-  [ "$got" = "$want" ] || err "checksum mismatch for $asset (got $got, want $want)"
+  # Fetch and verify both assets before installing either, so a failed run
+  # cannot leave the two binaries on different versions. The companion is
+  # best-effort: releases older than ocr_ext carry no asset or checksum
+  # entry for it.
+  fetch_asset "${ASSET_PREFIX}-${os}-${arch}" ||
+    err "download failed: ${ASSET_PREFIX}-${os}-${arch}"
+  if fetch_asset "${EXT_ASSET_PREFIX}-${os}-${arch}"; then
+    INSTALL_EXT=1
+  else
+    printf 'note: %s not found in this release; only %s is updated\n' "$EXT_BIN" "$BIN"
+    INSTALL_EXT=0
+  fi
 
-  install_binary "$tmp/$asset" "$INSTALL_DIR" "$BIN"
-
+  install_binary "$tmp/${ASSET_PREFIX}-${os}-${arch}" "$INSTALL_DIR" "$BIN"
   printf 'installed %s %s -> %s\n' "$BIN" "$VERSION" "$INSTALL_DIR/$BIN"
+  if [ "$INSTALL_EXT" = 1 ]; then
+    install_binary "$tmp/${EXT_ASSET_PREFIX}-${os}-${arch}" "$INSTALL_DIR" "$EXT_BIN"
+    printf 'installed %s %s -> %s\n' "$EXT_BIN" "$VERSION" "$INSTALL_DIR/$EXT_BIN"
+  fi
+
   post_install_path_notice "$BIN" "$INSTALL_DIR"
+}
+
+# fetch_asset downloads one release asset and verifies it against the
+# already fetched sha256sum.txt. Returns non-zero on any failure; the caller
+# decides whether that is fatal.
+fetch_asset() {
+  asset="$1"
+
+  printf 'downloading %s (%s/%s)...\n' "$asset" "$os" "$arch"
+  curl -fL --progress-bar --connect-timeout 5 --speed-limit 1024 --speed-time 30 -o "$tmp/$asset" "$base/$asset" ||
+    return 1
+
+  want="$(awk -v a="$asset" '$2 == a {print tolower($1)}' "$tmp/sha256sum.txt")"
+  [ -n "$want" ] || return 1
+  got="$(sha256 "$tmp/$asset" | awk '{print tolower($1)}')"
+  [ "$got" = "$want" ] || return 1
 }
 
 # Install the staged binary (mode 0755), escalating with sudo only when needed.

@@ -82,12 +82,15 @@ func resolveEffort(cfg *Config, cliOverride string) (template.Effort, error) {
 // the app config, which loads independently of endpoint resolution. A preview
 // therefore reports the limit its run would actually apply while keeping its
 // property of requiring no API key.
-func previewMaxTokens(templateDefault, cliOverride int) (int, error) {
-	cfgPath, err := defaultConfigPath()
-	if err != nil {
-		return 0, err
+func previewMaxTokens(templateDefault, cliOverride int, configPath string) (int, error) {
+	if configPath == "" {
+		var err error
+		configPath, err = defaultConfigPath()
+		if err != nil {
+			return 0, err
+		}
 	}
-	appCfg, err := LoadAppConfig(cfgPath)
+	appCfg, err := LoadAppConfig(configPath)
 	if err != nil {
 		return 0, fmt.Errorf("load app config: %w", err)
 	}
@@ -235,7 +238,7 @@ var newRetryCollector = llm.NewRetryCollector
 // tpl — defaulting when the config file is absent), resolves the LLM
 // endpoint (honoring resolveOpts), and
 // returns the runtime bundle. tpl is mutated in place.
-func loadLLMRuntime(tpl *template.Template, toolConfigPath string, resolveOpts llm.ResolveOptions) (*llmRuntime, error) {
+func loadLLMRuntime(tpl *template.Template, toolConfigPath string, configPath string, resolveOpts llm.ResolveOptions) (*llmRuntime, error) {
 	toolEntries, err := toolsconfig.Load(toolConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("load tools: %w", err)
@@ -243,10 +246,13 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath string, resolveOpts l
 	planToolDefs := agent.BuildToolDefs(toolEntries, true)
 	mainToolDefs := agent.BuildToolDefs(toolEntries, false)
 
-	cfgPath, err := defaultConfigPath()
-	if err != nil {
-		return nil, err
+	if configPath == "" {
+		configPath, err = defaultConfigPath()
+		if err != nil {
+			return nil, err
+		}
 	}
+	cfgPath := configPath
 	appCfg, err := LoadAppConfig(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("load app config: %w", err)
